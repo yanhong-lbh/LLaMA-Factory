@@ -346,11 +346,20 @@ class FinetuningArguments(FreezeArguments, LoraArguments, RLHFArguments, GaloreA
         default=False,
         metadata={"help": "Whether or not to save the training loss curves."},
     )
+    freeze_layers: Optional[List[int]] = field(
+        default=None,
+        metadata={"help": "List of layer indices to freeze during training."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):
             if isinstance(arg, str):
                 return [item.strip() for item in arg.split(",")]
+            return arg
+
+        def split_arg_int(arg):
+            if isinstance(arg, str):
+                return [int(item.strip()) for item in arg.split(",")]
             return arg
 
         self.freeze_trainable_modules: List[str] = split_arg(self.freeze_trainable_modules)
@@ -361,6 +370,7 @@ class FinetuningArguments(FreezeArguments, LoraArguments, RLHFArguments, GaloreA
         self.galore_target: List[str] = split_arg(self.galore_target)
         self.freeze_vision_tower = self.freeze_vision_tower or self.train_mm_proj_only
         self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
+        self.freeze_layers: Optional[List[int]] = split_arg_int(self.freeze_layers)
 
         assert self.finetuning_type in ["lora", "freeze", "full"], "Invalid fine-tuning method."
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."

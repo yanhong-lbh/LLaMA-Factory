@@ -6,6 +6,7 @@ stage: sft
 do_train: true
 finetuning_type: lora
 lora_target: all
+freeze_layers: [0, 2, 4, 8, 19]
 
 ### dataset
 dataset: identity,alpaca_en_demo

@@ -26,6 +26,7 @@ from .model_utils.quantization import QuantizationMethod
 from .model_utils.unsloth import get_unsloth_peft_model, load_unsloth_peft_model
 from .model_utils.visual import get_forbidden_modules, patch_target_modules
 
+from typing import List
 
 if TYPE_CHECKING:
     from transformers import PretrainedConfig, PreTrainedModel
@@ -122,7 +123,7 @@ def _setup_freeze_tuning(
                 )
 
             trainable_layers.append(module_name)
-
+            
     forbidden_modules = get_forbidden_modules(model.config, finetuning_args)
     for name, param in model.named_parameters():
         if any(trainable_layer in name for trainable_layer in trainable_layers) and not any(
@@ -135,6 +136,47 @@ def _setup_freeze_tuning(
 
     logger.info("Set trainable layers: {}".format(",".join(trainable_layers)))
 
+
+def _freeze_layers(
+    model: "PreTrainedModel",
+    freeze_layers: List[int],
+    finetuning_args: "FinetuningArguments",
+    cast_trainable_params_to_fp32: bool,
+) -> None:
+    logger.info("Applying custom layer freezing for layers: {}".format(freeze_layers))
+
+    if hasattr(model.config, "text_config"):  # composite models
+        config = getattr(model.config, "text_config")
+    else:
+        config = model.config
+
+    num_layers = (
+        getattr(config, "num_hidden_layers", None)
+        or getattr(config, "num_layers", None)
+        or getattr(config, "n_layer", None)
+    )
+    if not num_layers:
+        raise ValueError("Current model does not support layer freezing.")
+
+    for idx in freeze_layers:
+        if idx < 0 or idx >= num_layers:
+            raise ValueError(f"Layer index {idx} is out of range [0, {num_layers - 1}]")
+
+    layers_to_freeze = [f".{idx}." for idx in freeze_layers]
+
+    # this is borrowed from _setup_freeze_tuning, seems to be only related to VLM
+    forbidden_modules = get_forbidden_modules(model.config, finetuning_args)
+
+    for name, param in model.named_parameters():
+        if any(layer in name for layer in layers_to_freeze):
+            if not any(forbidden_module in name for forbidden_module in forbidden_modules):
+                param.requires_grad_(False)
+                logger.debug(f"Freezing parameter: {name}")
+        else:
+            if cast_trainable_params_to_fp32:
+                param.data = param.data.to(torch.float32)
+
+    logger.info("Frozen layers: {}".format(freeze_layers))
 
 def _setup_lora_tuning(
     config: "PretrainedConfig",
@@ -301,5 +343,8 @@ def init_adapter(
         )
     else:
         raise NotImplementedError("Unknown finetuning type: {}.".format(finetuning_args.finetuning_type))
+
+    if finetuning_args.freeze_layers is not None:
+        _freeze_layers(model, finetuning_args.freeze_layers, finetuning_args, cast_trainable_params_to_fp32)
 
     return model
